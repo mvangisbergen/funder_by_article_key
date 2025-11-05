@@ -1,0 +1,87 @@
+    create
+    or replace table els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_source_articles
+    as
+
+with
+    source_articles as (
+        select distinct
+            fal.article_key,
+            case
+                -- Subscription
+                when
+                    dai.article_access_type = 'Subscription Access'
+                    and dj.does_journal_count_against_reporting = 'Y'
+                    and dai.content_category = 'Item'
+                    and fal.published_count = 1
+                    and dai.kpi_ind = 'Y'
+                then 1
+                -- Sponsored
+                when
+                    dai.article_access_type = 'Gold Open Access'
+                    and dai.article_access_type_option = 'Hybrid'
+                    and dj.does_journal_count_against_reporting = 'Y'
+                    and dai.content_category = 'Item'
+                    and fal.published_count = 1
+                    and dai.kpi_ind = 'Y'
+                then 1
+                -- Author-Pays
+                when
+                    dai.article_access_type = 'Gold Open Access'
+                    and dai.article_access_type_option = 'Full'
+                    and dai.is_article_access_subsidized = 'N'
+                    and dj.pmg_code <> 351
+                    and dj.does_journal_count_against_reporting = 'Y'
+                    and dai.content_category = 'Item'
+                    and fal.published_count = 1
+                    and dai.kpi_ind = 'Y'
+                then 1
+                else 0
+            end as is_cer_publication,
+            fal.vor_date_key,
+            cast(left(fal.vor_date_key, 4) as float) as publication_year,
+            da.scopus_eid,
+            dai.is_elsevier_article,
+            dai.kpi_ind,
+            fal.funder_group_key,
+            fal.article_country_key,
+            fal.corr_author_country_key,
+            fal.master_institute_country_key,
+            dj.journal_acronym,
+            cast(get_path(source, 'publishername') as text) as publishername,
+            cast(get_path(source, 'sourcetitle') as text) as sourcetitle,
+            cast(get_path(source, 'srcid') as text) as srcid,
+            s.citation_type,
+            to_date(s.datesort, 'yyyymmDD') as date_sort,
+            s.funding_list,
+            s.grants as grants_list,
+            ftw.scopusid,
+            ftw.funders as funders_funder_to_work_links,
+            ftw.provenance as provenance_funder_to_work_links,
+            ftw.awards as awards_funder_to_work_links,
+        from els_stmj_db_prod.stmj_reporting.fact_article_lifecycle fal
+        join
+            els_stmj_db_prod.stmj_reporting.dim_journal dj
+            on fal.journal_key = dj.journal_key
+        join
+            els_stmj_db_prod.stmj_reporting.dim_article_indicators dai
+            on fal.article_indicators_key = dai.article_indicators_key
+        join
+            els_stmj_db_prod.stmj_reporting.dim_article da
+            on fal.article_key = da.article_key
+        left join
+            els_stmj_db_prod.stmj_reporting.bridge_funder bf
+            on bf.funder_group_key = fal.funder_group_key
+        left join
+            els_source_systems_db_prod.src_scopus.abstracts_and_indices_vw as s
+            on s.eid = da.scopus_eid
+        left join
+            els_source_systems_db_dev.src_scopus.funder_to_work_links ftw
+            on cast(replace (ftw.scopusid, '2-s2.0-', '') as float) = da.scopus_eid
+        where
+            fal.vor_date_key < 20250101
+            and fal.vor_date_key > 20231231
+            and is_cer_publication = 1
+    )
+
+select *
+from source_articles
