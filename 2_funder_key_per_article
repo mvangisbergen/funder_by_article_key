@@ -1,0 +1,84 @@
+    create
+    or replace table els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_funder_key_by_article
+    as
+
+with
+    source_articles as (
+        select *
+        from
+            els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_source_articles
+    ),
+
+    source_stmj as (
+        select s.*, bf.funder_key
+        from source_articles s
+        left join
+            els_stmj_db_prod.stmj_reporting.bridge_funder bf
+            on bf.funder_group_key = s.funder_group_key
+    ),
+
+    funders as (
+        select distinct
+            article_key,
+            split_part(
+                replace (get_path(fl.value, 'agency_id'), '"', ''), 'SciValFunders/', 2
+            ) as funding_body_id,
+            'SCOPUS' as data_source
+        from
+            source_articles,
+            lateral flatten(input => funding_list) as fl(
+                seq, key, path, index, value, this
+            )
+
+        union all
+
+        select distinct
+            article_key,
+            split_part(
+                replace (get_path(fl.value, 'agency_id'), '"', ''), 'SciValFunders/', 2
+            ) as funding_body_id,
+            'SCOPUS' as data_source
+        from
+            source_articles,
+            lateral flatten(input => grants_list) as fl(
+                seq, key, path, index, value, this
+            )
+
+        union all
+
+        select distinct
+            article_key,
+            cast(
+                cast(get_path(f.value, 'fundingBodyId') as text) as float
+            ) as funding_body_id,
+            'SCOPUS' as data_source
+        from
+            source_articles,
+            lateral flatten(input => funders_funder_to_work_links) as f(
+                seq, key, path, index, value, this
+            )
+
+        union all
+        select distinct
+            article_key,
+            m.funding_body_id_parent as funding_body_id,
+            'STMJ' as data_source
+        from source_stmj s
+        left join
+            els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_funder_key_matching m
+            on s.funder_key = m.funder_key
+    ),
+
+    articles_with_funders as (
+        select distinct * from funders where funding_body_id is not null
+    ),
+
+    final_cte as (
+        select s.article_key, f.funding_body_id, f.data_source
+        from source_articles s
+        left join articles_with_funders f on s.article_key = f.article_key
+    )
+
+select *
+from final_cte
+order by article_key
