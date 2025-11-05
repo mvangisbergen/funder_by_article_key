@@ -1,0 +1,82 @@
+    create
+    or replace table els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_article_analysis
+    as
+
+with
+    prep as (
+        select
+            fka.article_key,
+            fka.data_source,
+            fm.funding_body_id_parent,
+            fm.funding_body_id_child,
+            fm.activity_type_child,
+            fm.activity_type_parent,
+            fm.country_parent,
+            fm.finance_type_child,
+            fm.finance_type_parent,
+            fm.funder_name_parent
+        from
+            els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_funder_key_by_article fka
+        left join
+            els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_funder_metadata fm
+            on fka.funding_body_id = fm.funding_body_id_child
+    ),
+
+    final_cte as (
+        select
+            p.article_key,
+            case
+                when data_source is not null then data_source else 'NA'
+            end as data_source,
+            listagg(distinct funding_body_id_parent, ' | ') within group (
+                order by funding_body_id_parent
+            ) as funding_body_id_parent_list,
+            listagg(distinct funder_name_parent, ' | ') within group (
+                order by funder_name_parent
+            ) as funder_name_parent_list,
+            listagg(distinct activity_type_child, ' | ') within group (
+                order by activity_type_child
+            ) as activity_type_child_list,
+            listagg(distinct activity_type_parent, ' | ') within group (
+                order by activity_type_parent
+            ) as activity_type_parent_list,
+            listagg(distinct finance_type_child, ' | ') within group (
+                order by finance_type_child
+            ) as finance_type_child_list,
+            listagg(distinct finance_type_parent, ' | ') within group (
+                order by finance_type_parent
+            ) as finance_type_parent_list,
+            listagg(distinct country_parent, ' | ') within group (
+                order by country_parent
+            ) as country_parent_list,
+            case
+                when funder_name_parent_list like '%National Institutes of Health%'
+                then 1
+                else 0
+            end as is_nih_funded,
+            case
+                when country_parent_list like '%usa%' then 1 else 0
+            end as has_us_funding,
+            case
+                when
+                    (
+                        activity_type_child_list like '%GOVFED%'
+                        or activity_type_parent_list like '%GOVFED%'
+                    )
+                then 1
+                else 0
+            end as is_govfed_funded,
+            case when data_source is not null then 1 else 0 end as is_funded,
+            case
+                when sa.corr_author_country_key = 500 then 1 else 0
+            end as is_us_article
+        from prep p
+        left join
+            els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_source_articles sa
+            on sa.article_key = p.article_key
+        group by all
+    )
+
+select *
+from final_cte
+order by article_key, data_source
