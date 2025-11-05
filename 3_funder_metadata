@@ -1,0 +1,131 @@
+    create
+    or replace table els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_funder_metadata
+    as
+
+with
+    -- add funder metadata
+    -- -- create funder taxonomy table with metadata for child and parent funder
+    funder_taxonomy as (
+        select
+            tax.fundingbodyid,
+            cast(
+                get_path(parse_json(tax.acronym)[0], 'value') as text
+            ) as funder_acronym,
+            cast(
+                get_path(parse_json(tax.preferredname)[0], 'value') as text
+            ) as funder_name,
+            cast(
+                get_path(parse_json(tax.alternatename)[0], 'value') as text
+            ) as alternate_name,
+            tax.activitytype,
+            tax.financetype,
+            tax.country,
+            tax.status
+        from els_source_systems_db_dev.src_scopus.funders_taxonomy as tax
+        where tax.fundingbodyid is not null
+    ),
+
+    funder_cluster as (
+        select
+            fundingbodyid as funding_body_id_child,
+            fundingbodypreferredname as funder_name_child,
+            clusterrepresenativeid as funding_body_id_parent,
+            clusterrepresenativepreferredname as funder_name_parent,
+            clusterid as cluster_id,
+        from els_source_systems_db_dev.src_scopus.funder_cluster
+    ),
+
+    funder_mapping as (
+        select
+            funding_body_id_child,
+            funder_name_child,
+            funding_body_id_parent,
+            funder_name_parent,
+            cluster_id,
+            ft.funder_acronym as funder_acronym_child,
+            ft.alternate_name as alternate_name_child,
+            ft.activitytype as activity_type_child,
+            ft.financetype as finance_type_child,
+            ft.country as country_child,
+            ft.status as status_child,
+            ft2.funder_acronym as funder_acronym_parent,
+            ft2.alternate_name as alternate_name_parent,
+            ft2.activitytype as activity_type_parent,
+            ft2.financetype as finance_type_parent,
+            ft2.country as country_parent,
+            ft2.status as status_parent
+        from funder_cluster fc
+        left join funder_taxonomy ft on fc.funding_body_id_child = ft.fundingbodyid
+        left join funder_taxonomy ft2 on fc.funding_body_id_parent = ft2.fundingbodyid
+    )
+
+select *
+from funder_mapping
+;
+,
+
+funder_by_data_source as (
+    select
+        a.eid,
+        srcid,
+        citation_type,
+        date_sort,
+        sourcetitle,
+        funding_body_id,
+        f.funder_name_child,
+        f.funding_body_id_parent,
+        f.funder_name_parent,
+        f.cluster_id,
+        f.funder_acronym_child,
+        f.alternate_name_child,
+        f.activity_type_child,
+        f.finance_type_child,
+        f.country_child,
+        f.status_child,
+        f.funder_acronym_parent,
+        f.alternate_name_parent,
+        f.activity_type_parent,
+        f.finance_type_parent,
+        f.country_parent,
+        f.status_parent
+    from articles_complete a
+    left join
+        funder_mapping f
+        on cast(f.funding_body_id_child as varchar) = cast(a.funding_body_id as varchar)
+),
+
+final_cte as (
+    select distinct
+        eid,
+        da.article_key,
+        mode(srcid) over (partition by eid) as srcid,
+        mode(citation_type) over (partition by eid) as citation_type,
+        mode(date_sort) over (partition by eid) as date_sort,
+        mode(sourcetitle) over (partition by eid) as source_title,
+        funding_body_id,
+        funder_name_child,
+        funding_body_id_parent,
+        funder_name_parent,
+        cluster_id,
+        funder_acronym_child,
+        alternate_name_child,
+        activity_type_child,
+        finance_type_child,
+        country_child,
+        status_child,
+        funder_acronym_parent,
+        alternate_name_parent,
+        activity_type_parent,
+        finance_type_parent,
+        country_parent,
+        status_parent,
+        case when country_parent = 'usa' then 'usa' else 'row' end as funder_country
+    from funder_by_data_source f
+    left join
+        els_stmj_db_prod.stmj_reporting.dim_article da
+        on cast(da.scopus_eid as varchar) = cast(f.eid as varchar)
+        and da.is_current = 'Y'
+)
+
+select *
+from final_cte
