@@ -1,0 +1,120 @@
+    create
+    or replace table els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_articles_distinct
+    as
+
+with
+    source_articles as (
+        select *
+        from
+            els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_source_articles
+    ),
+
+    prep as (
+        select
+            article_key,
+            listagg(distinct data_source, ' | ') within group (
+                order by data_source
+            ) as data_source_list,
+            listagg(distinct funding_body_id_parent_list, ' || ') within group (
+                order by funding_body_id_parent_list
+            ) as funding_body_id_parent_list,
+            listagg(distinct funder_name_parent_list, ' || ') within group (
+                order by funder_name_parent_list
+            ) as funder_name_parent_list,
+            listagg(distinct activity_type_child_list, ' || ') within group (
+                order by activity_type_child_list
+            ) as activity_type_child_list,
+            listagg(distinct activity_type_parent_list, ' || ') within group (
+                order by activity_type_parent_list
+            ) as activity_type_parent_list,
+            listagg(distinct finance_type_child_list, ' || ') within group (
+                order by finance_type_child_list
+            ) as finance_type_child_list,
+            listagg(distinct finance_type_parent_list, ' || ') within group (
+                order by finance_type_parent_list
+            ) as finance_type_parent_list,
+            listagg(distinct country_parent_list, ' || ') within group (
+                order by country_parent_list
+            ) as country_parent_list,
+            listagg(distinct is_nih_funded, ' | ') within group (
+                order by is_nih_funded
+            ) as is_nih_funded_list,
+            listagg(distinct has_us_funding, ' | ') within group (
+                order by has_us_funding
+            ) as has_us_funding_list,
+            listagg(distinct is_govfed_funded, ' | ') within group (
+                order by is_govfed_funded
+            ) as is_govfed_funded_list,
+            listagg(distinct is_funded, ' | ') within group (
+                order by is_funded
+            ) as is_funded_list,
+            is_us_article
+        from
+            els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_article_analysis
+        group by all
+    ),
+
+    stmj_funder_list as (
+        select
+            s.article_key,
+            listagg(distinct df.funder_name, ' | ') within group (
+                order by funder_name
+            ) as stmj_funder_list,
+        from source_articles s
+        left join
+            els_stmj_db_prod.stmj_reporting.bridge_funder bf
+            on bf.funder_group_key = s.funder_group_key
+        left join
+            els_stmj_db_prod.stmj_reporting.dim_funder df
+            on bf.funder_key = df.funder_key
+        group by all
+    ),
+
+    final_cte as (
+        select
+            p.*,
+            case
+                when length(is_nih_funded_list) > 1
+                then 1
+                when length(has_us_funding_list) > 1
+                then 1
+                when length(is_govfed_funded_list) > 1
+                then 1
+                when length(is_funded_list) > 1
+                then 1
+                else 0
+            end as difference_between_sources,
+            sa.vor_date_key,
+            sa.publication_year,
+            sa.scopus_eid,
+            sa.is_elsevier_article,
+            sa.is_cer_publication,
+            sa.kpi_ind,
+            sa.funder_group_key,
+            sa.article_country_key,
+            sa.corr_author_country_key,
+            sa.master_institute_country_key,
+            sa.journal_acronym,
+            sa.publishername,
+            sa.sourcetitle,
+            sa.srcid,
+            sa.citation_type,
+            sa.date_sort,
+            -- sa.FUNDING_LIST,
+            -- sa.GRANTS_LIST,
+            -- sa.SCOPUSID,
+            -- sa.FUNDERS_FUNDER_TO_WORK_LINKS,
+            -- sa.PROVENANCE_FUNDER_TO_WORK_LINKS,
+            -- sa.AWARDS_FUNDER_TO_WORK_LINKS,
+            case
+                when sf.stmj_funder_list = 'No funder'
+                then null
+                else sf.stmj_funder_list
+            end as stmj_funder_list
+        from prep p
+        left join source_articles sa on sa.article_key = p.article_key
+        left join stmj_funder_list sf on sf.article_key = p.article_key
+    )
+
+select *
+from final_cte
