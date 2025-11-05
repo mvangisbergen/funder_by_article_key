@@ -1,0 +1,123 @@
+    create
+    or replace table els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_quarterly_report
+    as
+
+with
+    prep as (
+        select
+            aa.*,
+            sa.is_elsevier_article,
+            sa.is_cer_publication,
+            sa.kpi_ind,
+            sa.publication_year
+        from
+            els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_article_analysis aa
+        left join
+            els_stmj_db_sandbox.stmj_sandbox.funding_us_quarterly_report_source_articles sa
+            on sa.article_key = aa.article_key
+        where
+            sa.is_elsevier_article = 'Y'
+            and sa.is_cer_publication = 1
+            and publication_year >= 2023
+    ),
+
+    report as (
+        select
+            is_elsevier_article,
+            is_cer_publication,
+            kpi_ind,
+            publication_year,
+            article_key,
+            max(is_nih_funded) as is_nih_funded,
+            max(has_us_funding) as has_us_funding,
+            max(is_govfed_funded) as is_govfed_funded,
+            max(is_funded) as is_funded,
+            max(is_us_article) as is_us_article,
+            'STMJ' as data_source
+        from prep p
+        where data_source <> 'SCOPUS'
+        group by all
+
+        union all
+
+        select
+            is_elsevier_article,
+            is_cer_publication,
+            kpi_ind,
+            publication_year,
+            article_key,
+            max(is_nih_funded) as is_nih_funded,
+            max(has_us_funding) as has_us_funding,
+            max(is_govfed_funded) as is_govfed_funded,
+            max(is_funded) as is_funded,
+            max(is_us_article) as is_us_article,
+            'SCOPUS' as data_source
+        from prep p
+        where data_source <> 'STMJ'
+        group by all
+
+        union all
+
+        select
+            is_elsevier_article,
+            is_cer_publication,
+            kpi_ind,
+            publication_year,
+            article_key,
+            max(is_nih_funded) as is_nih_funded,
+            max(has_us_funding) as has_us_funding,
+            max(is_govfed_funded) as is_govfed_funded,
+            max(is_funded) as is_funded,
+            max(is_us_article) as is_us_article,
+            'SCOPUS AND STMJ' as data_source
+        from prep p
+        group by all
+    ),
+
+    final_prep as (
+        select
+            article_key,
+            is_elsevier_article,
+            is_cer_publication,
+            kpi_ind,
+            publication_year,
+            case
+                when is_nih_funded >= 1 then 'is nih-funded' else 'is not nih-funded'
+            end as is_nih_funded,
+            case
+                when has_us_funding >= 1 then 'is us-funded' else 'is not us-funded'
+            end as is_us_funded,
+            case
+                when is_govfed_funded >= 1
+                then 'is govfed funded'
+                else 'is not govfed-funded'
+            end as is_govfed_funded,
+            case
+                when is_funded >= 1 then 'is funded' else 'is not funded'
+            end as is_funded,
+            case
+                when is_us_article >= 1 then 'is us-article' else 'is not us-article'
+            end as is_us_article,
+            data_source
+        from report
+    ),
+
+    final_cte as (
+        select
+            count(distinct article_key) as n_articles,
+            is_elsevier_article,
+            is_cer_publication,
+            kpi_ind,
+            publication_year,
+            is_nih_funded,
+            is_us_funded,
+            is_govfed_funded,
+            is_funded,
+            is_us_article,
+            data_source
+        from final_prep
+        group by all
+    )
+
+select *
+from final_cte
